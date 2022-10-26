@@ -3,7 +3,7 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
-#include <linux/timer.h>
+#include <linux/hrtimer.h>
 
 #include "gpio.h"
 
@@ -14,19 +14,18 @@ static struct cdev *myCdev;
 static struct class *myClass;
 static struct device *myDevice;
 
-static struct timer_list mytimer;
-
 static unsigned long hits_per_second = 0;
 
-static void my_callback(struct timer_list* timmi)
+static struct hrtimer mytimer;
+	 	
+static enum hrtimer_restart hrtimer_callback (struct hrtimer *hrt)
 {
     printk("Hits: %ld\n", hits_per_second);
     printk("Counter: %ld", counter);
     hits_per_second = counter;
-	mytimer.expires=timmi->expires+1*HZ;	
-	printk("Callback wurde aufgerufen, expires ist %lu\n",timmi->expires);	
-	add_timer(&mytimer);
+	hrtimer_add_expires_ns(&mytimer,1000000000);
     counter = 0;
+	return HRTIMER_RESTART;	
 }
 
 static ssize_t my_drv_read(struct file *instance, char  __user *user, size_t count, loff_t *offset)
@@ -89,10 +88,12 @@ static int __init mod_init (void)
     };
     
     // timer setup
-	timer_setup(&mytimer,my_callback,0);
-	mytimer.expires=jiffies+1*HZ;
-	add_timer(&mytimer);
-	printk("Timer wurde gestartet, der Wert für HZ ist %d\n",HZ);
+	ktime_t mytime;
+	printk("mod_init aufgerufen bei %lu\n", jiffies);
+	hrtimer_init(&mytimer,CLOCK_MONOTONIC,HRTIMER_MODE_REL);
+	mytimer.function=hrtimer_callback;
+	mytime=ktime_set(0,1000000000);
+	hrtimer_start(&mytimer,mytime,HRTIMER_MODE_REL);
 
     return 0;
 
@@ -118,12 +119,7 @@ static void __exit mod_exit(void)
     cdev_del(myCdev);
     unregister_chrdev_region(myDevNumber,1);
 
-	if(timer_pending(&mytimer))
-	printk("Timer noch aktiv\n");
-	if(del_timer_sync(&mytimer))
-		printk("Timer war aktiv, habe beendet!\n");
-	else
-		printk("War alles ok, reg dich nicht auf!\n");
+	hrtimer_cancel(&mytimer);
 
     return;
 }
